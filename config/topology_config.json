@@ -1,0 +1,126 @@
+{
+  "environments": [
+    {
+      "id": "env_greenhouse_a",
+      "name": "Smart Greenhouse A",
+      "update_interval_sec": 0.5,
+      "state_variables": {
+        "base_temp": {
+          "type": "sine_wave",
+          "amplitude": 8.0,
+          "period_sec": 30.0,
+          "bias": 24.0,
+          "noise": 0.2
+        },
+        "solar_radiation": {
+          "type": "diurnal",
+          "max_val": 800.0,
+          "period_sec": 60.0
+        },
+        "cloud_cover": {
+          "type": "random_walk",
+          "min_val": 0.0,
+          "max_val": 1.0,
+          "step": 0.1,
+          "initial": 0.2
+        }
+      }
+    },
+    {
+      "id": "env_outdoor_b",
+      "name": "Agricultural Field B",
+      "update_interval_sec": 0.5,
+      "state_variables": {
+        "wind_speed": {
+          "type": "random_walk",
+          "min_val": 0.0,
+          "max_val": 25.0,
+          "step": 1.0,
+          "initial": 5.0
+        },
+        "air_density": {
+          "type": "constant",
+          "value": 1.225
+        },
+        "base_temp": {
+          "type": "sine_wave",
+          "amplitude": 12.0,
+          "period_sec": 45.0,
+          "bias": 18.0,
+          "noise": 0.5
+        }
+      }
+    }
+  ],
+  "gateways": [
+    {
+      "id": "gw_primary",
+      "name": "Primary Edge Gateway",
+      "buffer_size": 200,
+      "aggregation_interval_sec": 2.0,
+      "network_reliability": 0.8
+    },
+    {
+      "id": "gw_secondary",
+      "name": "Secondary Edge Gateway",
+      "buffer_size": 100,
+      "aggregation_interval_sec": 3.0,
+      "network_reliability": 0.5
+    }
+  ],
+  "devices": [
+    {
+      "id": "dev_solar_panel_01",
+      "name": "High-Efficiency Solar Panel 01",
+      "type": "solar_panel",
+      "environment_id": "env_greenhouse_a",
+      "gateway_id": "gw_primary",
+      "update_interval_sec": 1.0,
+      "specs": {
+        "efficiency": 0.22,
+        "panel_area": 1.5
+      },
+      "telemetry_rules": {
+        "power_output": "env.solar_radiation * specs.efficiency * specs.panel_area * (1.0 - env.cloud_cover)",
+        "cell_temperature": "env.base_temp + (self.power_output * 0.05) + random.uniform(-0.3, 0.3)",
+        "voltage": "18.0 + (env.solar_radiation * 0.01) + random.uniform(-0.1, 0.1)"
+      }
+    },
+    {
+      "id": "dev_soil_moisture_01",
+      "name": "Soil Moisture Sensor 01",
+      "type": "soil_moisture",
+      "environment_id": "env_greenhouse_a",
+      "gateway_id": "gw_primary",
+      "update_interval_sec": 1.5,
+      "specs": {
+        "calibration_factor": 1.02
+      },
+      "telemetry_rules": {
+        "soil_moisture": "max(10.0, 60.0 - (env.base_temp * 0.5) - (env.solar_radiation * 0.01) + random.uniform(-1.0, 1.0))",
+        "soil_temperature": "env.base_temp - 2.0 + random.uniform(-0.1, 0.1)"
+      }
+    },
+    {
+      "id": "dev_drone_01",
+      "name": "Smart Monitoring Drone 01",
+      "type": "smart_drone",
+      "environment_id": "env_outdoor_b",
+      "gateway_id": "gw_secondary",
+      "update_interval_sec": 1.0,
+      "specs": {
+        "base_battery_drain": 0.05,
+        "payload_weight": 2.5
+      },
+      "initial_state": {
+        "battery_pct": 100.0,
+        "altitude": 15.0
+      },
+      "telemetry_rules": {
+        "battery_pct": "max(0.0, state.battery_pct - (specs.base_battery_drain + (env.wind_speed * 0.01) + (state.altitude * 0.002)))",
+        "altitude": "state.altitude + random.uniform(-0.5, 0.5)",
+        "wind_resistance": "0.5 * env.air_density * (env.wind_speed ** 2) * 0.1"
+      }
+    }
+  ]
+}

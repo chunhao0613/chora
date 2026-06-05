@@ -1,0 +1,3 @@
+# No external runtime dependencies are required.
+# The project uses standard library modules (asyncio, math, random, json, logging, argparse).
+# Python >= 3.8 is recommended.
