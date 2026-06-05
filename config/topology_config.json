@@ -1,4 +1,5 @@
 {
+  "dev_mode": true,
   "environments": [
     {
       "id": "env_greenhouse_a",
@@ -48,6 +49,16 @@
           "period_sec": 45.0,
           "bias": 18.0,
           "noise": 0.5
+        },
+        "weather_state": {
+          "type": "markov_chain",
+          "states": ["sunny", "cloudy", "rainy"],
+          "initial": "sunny",
+          "transition_matrix": {
+            "sunny": {"sunny": 0.8, "cloudy": 0.15, "rainy": 0.05},
+            "cloudy": {"sunny": 0.3, "cloudy": 0.5, "rainy": 0.2},
+            "rainy": {"sunny": 0.1, "cloudy": 0.4, "rainy": 0.5}
+          }
         }
       }
     }
@@ -58,14 +69,39 @@
       "name": "Primary Edge Gateway",
       "buffer_size": 200,
       "aggregation_interval_sec": 2.0,
-      "network_reliability": 0.8
+      "network_reliability": 0.9,
+      "connection": {
+        "protocol": "http",
+        "endpoint": "http://127.0.0.1:8080/api/telemetry",
+        "auth": {
+          "type": "jwt",
+          "private_key_file": "certs/device.key",
+          "issuer": "chora-gateway-primary",
+          "audience": "aws-iot-core-mock",
+          "token_ttl_sec": 300,
+          "handshake_delay_sec": 1.0
+        }
+      }
     },
     {
       "id": "gw_secondary",
       "name": "Secondary Edge Gateway",
       "buffer_size": 100,
       "aggregation_interval_sec": 3.0,
-      "network_reliability": 0.5
+      "network_reliability": 0.8,
+      "connection": {
+        "protocol": "mqtt",
+        "endpoint": "127.0.0.1",
+        "port": 1883,
+        "topic": "telemetry/drone",
+        "auth": {
+          "type": "mtls",
+          "cert_file": "certs/client.crt",
+          "key_file": "certs/client.key",
+          "ca_file": "certs/ca.crt",
+          "handshake_delay_sec": 1.5
+        }
+      }
     }
   ],
   "devices": [
@@ -81,7 +117,7 @@
         "panel_area": 1.5
       },
       "telemetry_rules": {
-        "power_output": "env.solar_radiation * specs.efficiency * specs.panel_area * (1.0 - env.cloud_cover)",
+        "power_output": "if env.cloud_cover > 0.5 then env.solar_radiation * specs.efficiency * specs.panel_area * 0.3 else env.solar_radiation * specs.efficiency * specs.panel_area",
         "cell_temperature": "env.base_temp + (self.power_output * 0.05) + random.uniform(-0.3, 0.3)",
         "voltage": "18.0 + (env.solar_radiation * 0.01) + random.uniform(-0.1, 0.1)"
       }

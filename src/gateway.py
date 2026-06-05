@@ -3,6 +3,7 @@ import time
 import random
 import logging
 from collections import deque
+from src.adapters import ProtocolAdapterFactory
 
 logger = logging.getLogger("Gateway")
 
@@ -19,6 +20,11 @@ class EdgeGateway:
         # Queue for incoming telemetry from edge devices
         self.telemetry_queue = asyncio.Queue()
         
+        # Instantiate real connection adapter based on connection config
+        self.connection_config = config_data.get("connection", {})
+        self.connection_config["dev_mode"] = config_data.get("dev_mode", False)
+        self.adapter = ProtocolAdapterFactory.create_adapter(self.connection_config)
+        
         # Simulated connection status
         self.is_online = True
         
@@ -28,6 +34,17 @@ class EdgeGateway:
     async def start(self):
         """Starts the gateway loops: aggregation and network dispatching."""
         self._running = True
+        
+        # Attempt initial adapter connection
+        try:
+            logger.info(f"Gateway '{self.id}' connecting protocol adapter...")
+            await self.adapter.connect()
+            self.is_online = True
+            logger.info(f"Gateway '{self.id}' initial adapter connection established.")
+        except Exception as e:
+            logger.error(f"Gateway '{self.id}' initial connection failed: {e}. Starting in offline buffering mode.")
+            self.is_online = False
+            
         self._tasks.append(asyncio.create_task(self._run_aggregation_loop()))
         self._tasks.append(asyncio.create_task(self._run_network_simulation_loop()))
         logger.info(f"Gateway '{self.name}' ({self.id}) started.")
@@ -42,6 +59,13 @@ class EdgeGateway:
             except asyncio.CancelledError:
                 pass
         self._tasks.clear()
+        
+        # Close connection adapter
+        try:
+            await self.adapter.close()
+        except Exception as e:
+            logger.error(f"Error closing adapter for Gateway '{self.id}': {e}")
+            
         logger.info(f"Gateway '{self.name}' ({self.id}) stopped.")
 
     async def receive_telemetry(self, message: dict):
@@ -86,65 +110,65 @@ class EdgeGateway:
                 logger.error(f"Error in aggregation loop of gateway '{self.id}': {e}", exc_info=True)
 
     async def _run_network_simulation_loop(self):
-        """Simulates intermittent network dropouts based on configured reliability."""
+        """Simulates intermittent network dropouts and manages adapter reconnection."""
         while self._running:
             # Check network reliability
             roll = random.random()
-            new_status = roll < self.network_reliability
+            simulated_online = roll < self.network_reliability
             
-            if new_status != self.is_online:
-                self.is_online = new_status
-                if self.is_online:
-                    logger.info(f"Gateway '{self.id}' [ONLINE] Connected to backend API.")
-                    # Trigger a transmission immediately on reconnection
-                    await self._attempt_transmission()
+            if simulated_online != self.is_online:
+                if simulated_online:
+                    logger.info(f"Gateway '{self.id}' network simulation: RESTORING connection.")
+                    try:
+                        await self.adapter.connect()
+                        self.is_online = True
+                        logger.info(f"Gateway '{self.id}' [ONLINE] Reconnected successfully.")
+                        # Trigger an immediate upload of cached packets
+                        await self._attempt_transmission()
+                    except Exception as e:
+                        logger.error(f"Gateway '{self.id}' adapter reconnection failed: {e}. Remaining offline.")
+                        self.is_online = False
                 else:
-                    logger.warning(f"Gateway '{self.id}' [OFFLINE] Disconnected! Switching to local buffering.")
+                    logger.warning(f"Gateway '{self.id}' [OFFLINE] Network dropout simulated! Closing connection.")
+                    self.is_online = False
+                    try:
+                        await self.adapter.close()
+                    except Exception:
+                        pass
             
             # Check connection every 5 seconds
             await asyncio.sleep(5.0)
 
     async def _attempt_transmission(self):
-        """Attempts to flush buffered telemetry payloads to the backend API."""
+        """Attempts to flush buffered telemetry payloads to the backend system."""
         if not self.is_online:
             return
             
         if not self.buffer:
             return
             
-        logger.info(f"Gateway '{self.id}' [UPLOAD] Uploading {len(self.buffer)} buffered aggregate packet(s) to Backend API...")
-        
-        # Simulate network latency
-        await asyncio.sleep(random.uniform(0.1, 0.4))
-        
-        # Flush all buffer entries (or batch up to limits if needed)
+        # Flush all buffer entries
         uploaded_count = 0
         while self.buffer:
             payload = self.buffer[0] # peek
             
-            # Mock upload execution
-            success = self._mock_post_api(payload)
-            if success:
-                self.buffer.popleft() # remove from buffer
-                uploaded_count += 1
-            else:
-                logger.error(f"Gateway '{self.id}' upload failed temporarily. Retrying later.")
+            try:
+                # Transmit using adapter
+                success = await self.adapter.send(payload)
+                if success:
+                    self.buffer.popleft() # remove from buffer
+                    uploaded_count += 1
+                else:
+                    logger.error(f"Gateway '{self.id}' upload refused by endpoint. Buffering data.")
+                    break
+            except Exception as e:
+                logger.error(f"Gateway '{self.id}' transmission error: {e}. Switching to offline buffer mode.")
+                self.is_online = False
+                try:
+                    await self.adapter.close()
+                except Exception:
+                    pass
                 break
                 
         if uploaded_count > 0:
-            logger.info(f"Gateway '{self.id}' [SUCCESS] Successfully uploaded {uploaded_count} packet(s). Buffer size: {len(self.buffer)}")
-
-    def _mock_post_api(self, payload: dict) -> bool:
-        """Mocks HTTP POST to the backend system. Outputs payload metadata to console."""
-        # Print a neat summary of the uploaded telemetry packet
-        print(f"\n======================================================================")
-        print(f"[BACKEND API RECEIVED] Gateway: {payload['gateway_id']} ({payload['gateway_name']})")
-        print(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(payload['timestamp']))}")
-        print(f"Batch Size: {payload['batch_size']} metrics | Devices: {', '.join(payload['devices_reporting'])}")
-        
-        # Show detailed telemetry inside the batch
-        for item in payload['data']:
-            metrics_str = ", ".join(f"{k}: {v:.3f}" if isinstance(v, float) else f"{k}: {v}" for k, v in item['telemetry'].items())
-            print(f"  |- Device: {item['device_id']} ({item['device_type']}) | Telemetry => {metrics_str}")
-        print(f"======================================================================\n")
-        return True
+            logger.debug(f"Gateway '{self.id}' [SUCCESS] Successfully uploaded {uploaded_count} packet(s). Buffer size: {len(self.buffer)}")

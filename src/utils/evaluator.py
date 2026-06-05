@@ -1,6 +1,7 @@
 import math
 import random
 import logging
+import re
 
 logger = logging.getLogger("SafeEvaluator")
 
@@ -46,10 +47,22 @@ class SafeEvaluator:
         }
 
         try:
+            # Preprocess "if A then B else C" to Python's "B if A else C"
+            pattern = re.compile(
+                r'\bif\s+((?:(?!if\b|then\b|else\b).)+)\s+then\s+((?:(?!if\b|then\b|else\b).)+)\s+else\s+((?:(?!if\b|then\b|else\b).)+)',
+                re.IGNORECASE
+            )
+            processed_expr = expression
+            while True:
+                new_expr, count = pattern.subn(r'(\2 if \1 else \3)', processed_expr)
+                if count == 0:
+                    break
+                processed_expr = new_expr
+
             # We pass a clean globals dict without standard __builtins__ to prevent malicious code execution.
             # Only math/random features and topology objects are exposed.
-            val = eval(expression, {"__builtins__": None}, context)
+            val = eval(processed_expr, {"__builtins__": None}, context)
             return float(val)
         except Exception as e:
-            logger.error(f"Error evaluating formula '{expression}': {e}. Returning 0.0.")
+            logger.error(f"Error evaluating formula '{expression}' (processed: '{processed_expr}'): {e}. Returning 0.0.")
             return 0.0

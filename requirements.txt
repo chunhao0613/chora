@@ -1,3 +1,9 @@
-# No external runtime dependencies are required.
-# The project uses standard library modules (asyncio, math, random, json, logging, argparse).
-# Python >= 3.8 is recommended.
+aiohttp>=3.8.0
+paho-mqtt>=1.6.1
+aiokafka>=0.8.0
+pyjwt>=2.4.0
+cryptography>=37.0.0
+watchdog>=3.0.0
+fastapi>=0.100.0
+uvicorn>=0.22.0
+pydantic>=2.0.0

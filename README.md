@@ -1,18 +1,22 @@
-# 高擬真物聯網邊緣運算模擬系統 (High-Fidelity IoT Edge Simulation System)
+# 高擬真物聯網邊緣運算模擬系統 (Chora IoT Simulation System)
 
-本系統是一套採用非同步架構（Asynchronous）、配置驅動（Configuration-driven）的物聯網模擬器。旨在高度還原「環境 ➔ 邊緣設備 ➔ 邊緣閘道器 ➔ 後端 API」的真實拓樸結構。
+本系統是一套採用非同步架構（Asynchronous）、配置驅動（Configuration-driven）的輕量級合成數據產生器與物聯網模擬器。旨在高度還原「環境 ➔ 邊緣設備 ➔ 邊緣閘道器 ➔ 資料落地 (CSV/JSONL/SQLite) / 雲端 API」的真實拓樸結構。
 
-不同於常見的亂數數據生成器，本系統採用**物理驅動的數位孿生模型**，感測數據皆透過定義好的物理公式，隨全域及區域環境狀態（如氣溫、日照輻射、雲遮蔽率等）的時間演進動態計算得出。
+Chora 常駐為守護進程（Daemon 微服務），具備動態拓樸 CRUD API、配置檔熱重載（Hot-Reloading）以及混沌工程故障注入能力，非常適合用於物聯網邊緣運算數據採集與 AI 訓練用合成數據生成。
 
 ---
 
 ## 🌟 核心特色 (Key Features)
 
-1. **邊緣閘道器拓樸 (Gateway-Centric Topology)**：支援完整轉發鏈路。閘道器負責管轄特定裝置群，具備數據聚合、協議轉換、斷線本地 FIFO 快取及重連批次上傳機制。
-2. **物理驅動數位孿生引擎 (Physics-Driven Digital Twin)**：內建 4 種物理變數產生器：**正弦波**（模擬日夜氣溫震盪）、**日照模型**（半波整流正弦波）、**隨機漫步**（模擬雲遮蔽與風速波動）與**常數**。設備數據經由公式計算得出：`太陽能發電量 = f(太陽輻射, 設備效率, 雲量遮蔽率)`。
-3. **動態配置驅動 (Dynamic Schema Definition)**：完全透過 JSON 檔動態定義「環境」、「閘道器」、「設備規格」與「感測公式」。**無需修改任何程式碼**即可動態新增設備類型（例如：智慧無人機）與專屬 Telemetry 欄位。
-4. **健全的網路容錯與緩衝機制 (Edge Buffering & Recovery)**：隨機模擬閘道器網路斷線。斷線時，數據會自動寫入本地 FIFO 環形緩衝區；待網路重新連線後，立刻以批次形式補發上傳，防止數據丟失。
-5. **沙箱式安全算式求值 (Safe Formula Evaluation)**：使用受限的上下文，僅對數學函式、隨機函數與拓樸物件開放，防止執行惡意代碼，確保公式計算安全性。
+1. **常駐微服務架構 (Daemonized Microservice)**：拔除執行時長限制，作為 Daemon 容器或行程常駐運行，支援標準的系統中斷訊號（SIGTERM）安全退出與資源釋放。
+2. **動態拓樸 REST API (Dynamic Topology CRUD)**：提供 `/api/topology/*` 端點，支援在不重啟模擬器的情況下動態新增環境與邊緣設備，並可即時回傳整個系統的記憶體拓樸狀態。
+3. **配置檔熱重載 (Config Hot-Reloading) 🔄**：引入 `watchdog` 套件，即時監聽設定檔。在不重啟系統或打 API 的情況下，修改設定檔即可在背景即時重新套用新的物理算式。
+4. **多樣性本地資料落地 (Local Data Sinks) 💾**：新增兩種全新的輸出轉發器。除了支援 HTTP/MQTT/Kafka 外，更支援將產生的遙測與關聯性數據直接寫入本地的 `.csv` / `.jsonl` 檔案或 SQLite 資料庫（`.db`），讓 Chora 變身為強大的合成數據產生器（Synthetic Data Generator）。
+5. **更高階的物理分佈引擎 (Advanced Distribution Engine) 📈**：
+   - **馬可夫鏈 (Markov Chain)**：支援在環境變數配置隨機機率矩陣，例如模擬「天氣狀態」在「晴天 ➔ 多雲 ➔ 陣雨」之間依機率自然轉換。
+   - **自訂條件公式**：支援在設定檔中編寫複雜的 Python 條件式（例如 `if env.cloud_cover > 0.5 then X else Y`），使沙箱求值器（SafeEvaluator）支援三元運算子。
+6. **真實通訊與安全認證 (Real Protocols & Security)**：內建 HTTP/REST (aiohttp)、MQTT (paho-mqtt) 與 Kafka (aiokafka) 轉發適配器，並支援 mTLS (X.509) 與動態 JWT (RS256) 安全簽發認證。
+7. **邊緣快取與斷線重連 (Edge Buffering & Recovery)**：閘道器模擬網絡隨機斷線。斷線時，遙測數據會自動緩衝至 FIFO 環形佇列；連線恢復時，自動批次補發。
 
 ---
 
@@ -21,112 +25,110 @@
 ```text
 chora/
 ├── config/
-│   └── topology_config.json      # 拓樸、設備規格與物理算式配置檔
+│   └── topology_config.json      # 系統預設初始拓樸與物理公式設定
 ├── src/
-│   ├── __init__.py
-│   ├── main.py                   # 模擬器協調器與 CLI 啟動點
-│   ├── environment.py            # 物理引擎 (生成環境狀態變數)
+│   ├── main.py                   # 模擬器守護進程與 Control Plane REST API 伺服器
+│   ├── environment.py            # 物理引擎 (生成環境狀態變數、馬可夫鏈與混沌覆寫)
 │   ├── device.py                 # 虛擬邊緣設備 (取樣環境並求值)
-│   ├── gateway.py                # 邊緣閘道器 (聚合、緩衝與網路發送)
+│   ├── gateway.py                # 邊緣閘道器 (數據聚合、快取與發送)
+│   ├── adapters.py               # 協議轉發適配器 (HTTP, MQTT, Kafka, CSV, JSONL, SQLite)
 │   └── utils/
-│       ├── __init__.py
-│       └── evaluator.py          # 沙箱安全算式求值引擎
-├── README.md                     # 本說明文件 (中英文版)
-└── requirements.txt              # 依賴宣告 (無外部依賴，純標準庫實現)
+│       ├── crypto_helper.py      # 安全認證輔助 (mTLS 自簽憑證與 jwt 金鑰對生成)
+│       └── evaluator.py          # 沙箱安全算式求值引擎 (支援 ternary 條件運算子)
+├── examples/
+│   └── mock_server.py            # 測試用本機 Ingest 接收伺服器 (封存供參考)
+├── Dockerfile                    # 容器化打包設定
+├── docker-compose.yml            # 整合容器一鍵啟動檔
+├── README.md                     # 本說明文件
+└── requirements.txt              # 外部相依套件宣告
 ```
 
 ---
 
-## 🚀 安裝與執行說明 (Getting Started)
+## 🚀 部署與執行說明 (Deployment & Getting Started)
 
-### 執行環境需求
-* Python 3.8 或以上版本。
-* 本專案僅使用 Python 標準庫（`asyncio`, `math`, `random`, `json`, `logging` 等），**無需安裝任何外部第三方套件**。
-
-### 啟動指令
-請在專案根目錄下，透過 Python 的模組（`-m`）方式啟動：
-
-#### 1. 設定模擬執行時間 (例如執行 30 秒後自動優雅關閉)
+### 方法一：使用 Docker Compose 啟動
+這是最簡單的啟動方式，它會拉起 Chora 模擬引擎：
 ```bash
-python -m src.main --config config/topology_config.json --duration 30
+docker-compose up --build -d
 ```
+* **Chora Engine API**: `http://localhost:8081`
 
-#### 2. 無限期運行 (按 `Ctrl+C` 結束運行)
+### 方法二：本機 Python 執行
+1. **安裝依賴套件**：
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **啟動模擬器守護進程**：
+   ```bash
+   python -m src.main --config config/topology_config.json
+   ```
+3. **將數據導出至本地檔案 (CSV/JSONL/SQLite) 💾**：
+   ```bash
+   # 輸出為 CSV 格式
+   python -m src.main --config config/topology_config.json --output ./data/farm_dataset.csv
+   
+   # 輸出為 SQLite 資料庫
+   python -m src.main --config config/topology_config.json --output ./data/farm_dataset.db
+   ```
+
+---
+
+## 🎛️ 控制平面 REST API & 監控規格 (Control Plane API)
+
+Chora 引擎的 Control Plane 監聽在 **`8081` 埠**：
+
+### 1. 動態拓樸管理 API (Topology REST API)
+
+* **查看即時拓樸狀態**：
+  ```bash
+  curl http://127.0.0.1:8081/api/topology/status
+  ```
+* **動態新增環境 (Environment)**：
+  ```bash
+  curl -X POST http://127.0.0.1:8081/api/topology/environment \
+    -H "Content-Type: application/json" \
+    -d '{
+      "id": "env_dynamic_c",
+      "name": "Dynamic Environment C",
+      "update_interval_sec": 1.0,
+      "state_variables": {
+        "base_temp": {"type": "constant", "value": 25.0}
+      }
+    }'
+  ```
+* **動態新增邊緣設備 (Device)**：
+  ```bash
+  curl -X POST http://127.0.0.1:8081/api/topology/device \
+    -H "Content-Type: application/json" \
+    -d '{
+      "id": "dev_dynamic_temp_01",
+      "name": "Dynamic Temp Sensor 01",
+      "type": "temp_sensor",
+      "environment_id": "env_dynamic_c",
+      "gateway_id": "gw_primary",
+      "update_interval_sec": 1.0,
+      "specs": {"offset": 0.5},
+      "telemetry_rules": {
+        "temperature": "env.base_temp + specs.offset + random.uniform(-0.1, 0.1)"
+      }
+    }'
+  ```
+
+### 2. 混沌工程注入 (Chaos Engineering)
+
+在不停止模擬器的情況下，動態改變指定環境的物理參數：
 ```bash
-python -m src.main --config config/topology_config.json --duration 0
+# 注入 15 秒的颱風事件 (會自動最大化雲遮蔽率、飆升風速、並拉低氣溫)
+curl -X POST http://127.0.0.1:8081/api/env/env_greenhouse_a/event \
+  -H "Content-Type: application/json" \
+  -d '{"event": "typhoon", "duration_sec": 15}'
 ```
 
 ---
 
-## ⚙️ 動態配置說明 (Configuration Reference)
+## 🔒 安全性憑證管理 (Security & dev_mode)
 
-所有的拓樸參數皆定義在 [config/topology_config.json](file:///f:/Github/iota-project/chora/config/topology_config.json) 中。
-
-### 1. 環境設定 (`environments`)
-定義模擬的物理場景與環境變數：
-* **`sine_wave`**：平滑正弦波（如溫度）。參數：`amplitude` (振幅), `period_sec` (週期), `bias` (基值), `noise` (物理雜訊強度)。
-* **`diurnal`**：日夜週期半波整流正弦波（如太陽輻射，夜晚為 0）。參數：`max_val` (最大輻射值), `period_sec` (週期)。
-* **`random_walk`**：隨機漫步（如雲量、風速）。參數：`min_val` (最小值), `max_val` (最大值), `step` (單步最大偏移), `initial` (初始值)。
-* **`constant`**：靜態常數。參數：`value`。
-
-### 2. 閘道器設定 (`gateways`)
-模擬邊緣路由器的行為：
-* `buffer_size`：本地快取最大儲存量（FIFO 佇列）。
-* `aggregation_interval_sec`：數據聚合的時間間隔（單位：秒）。
-* `network_reliability`：網路連線健全機率（`0.0` 到 `1.0` 之間），每次狀態檢查時依此值模擬斷線或連線。
-
-### 3. 設備與計算公式 (`devices`)
-定義綁定的物理環境與動態 Telemetry 欄位：
-* `specs`：設備固有的靜態規格參數（如發電板面積、轉換率）。
-* `initial_state`：具備持續演進的可變內部狀態（如無人機的當前電量、飛行高度）。
-* `telemetry_rules`：動態計算公式。在執行時可直接存取以下命名空間：
-  - `env.*` (當前環境物理變數)
-  - `specs.*` (設備硬體規格)
-  - `state.*` (設備即時 mutable 狀態)
-  - `self.*` (同一個週期內，先前已計算出的其他 Telemetry 數據)
-  - `random.*` (Python 隨機數函式庫，如 `random.uniform`)
-  - 標準數學函式庫 (`sin`, `cos`, `tan`, `sqrt`, `exp`, `log`, `min`, `max`, `abs` 等)
-
-*公式範例 (發電量連動日照與雲遮蔽率)：*
-```json
-"power_output": "env.solar_radiation * specs.efficiency * specs.panel_area * (1.0 - env.cloud_cover)"
-```
-
----
-
-## 📊 典型輸出序列 (Sample Log Output)
-
-```text
-2026-06-05 21:04:30,248 [INFO] (SimulationManager) Successfully initialized topology:
-  - Environments: 2 (env_greenhouse_a, env_outdoor_b)
-  - Gateways: 2 (gw_primary, gw_secondary)
-  - Devices: 3 (dev_solar_panel_01, dev_soil_moisture_01, dev_drone_01)
-2026-06-05 21:04:30,248 [INFO] (SimulationManager) Starting simulation subsystems...
-2026-06-05 21:04:30,248 [INFO] (SimulationManager) All subsystems are running asynchronously.
-
-======================================================================
-[BACKEND API RECEIVED] Gateway: gw_primary (Primary Edge Gateway)
-Timestamp: 2026-06-05 21:04:32
-Batch Size: 5 metrics | Devices: dev_solar_panel_01, dev_soil_moisture_01
-  |- Device: dev_solar_panel_01 (solar_panel) | Telemetry => power_output: 0.000, cell_temperature: 23.939, voltage: 18.044
-  |- Device: dev_soil_moisture_01 (soil_moisture) | Telemetry => soil_moisture: 47.481, soil_temperature: 21.952
-  |- Device: dev_solar_panel_01 (solar_panel) | Telemetry => power_output: 9.561, cell_temperature: 25.002, voltage: 18.454
-======================================================================
-
-2026-06-05 21:04:35,256 [WARNING] (Gateway) Gateway 'gw_primary' [OFFLINE] Disconnected! Switching to local buffering.
-2026-06-05 21:04:40,260 [INFO] (Gateway) Gateway 'gw_secondary' [ONLINE] Connected to backend API.
-2026-06-05 21:04:40,260 [INFO] (Gateway) Gateway 'gw_secondary' [UPLOAD] Uploading 2 buffered aggregate packet(s) to Backend API...
-```
-
----
-
-## English Version Documentation
-
-Please refer to the section below for documentation in English.
-
-### 🌟 Key Features
-1. **Gateway-Centric Topology**: Establishes a complete hierarchy: `Environment` ➔ `Devices` ➔ `Edge Gateway` ➔ `Backend API`.
-2. **Physics-Driven Digital Twin Engine**: Supports **Sine Waves**, **Diurnal Sunlight**, **Random Walks**, and **Constants** physics generators. Sensor values are derived from dynamic physical states.
-3. **Dynamic Configuration Schema**: Configure the whole topology using a simple JSON file. Adding new device types or formulas requires no code modifications.
-4. **Resilient Edge Gateway Buffering**: Automatically caches aggregated packets during simulated network dropouts and batch-uploads them once the connection recovers.
-5. **Safe Sandbox Formula Evaluation**: Computes formulas within a sandboxed math namespace.
+為了降低測試門檻並確保安全性：
+* 在配置檔 `topology_config.json` 中，若設有 `"dev_mode": true`，當 mTLS 或 JWT 憑證缺失時，Chora 會於啟動時**自動在本機生成測試憑證**。
+* 若將 `"dev_mode": false`，Chora 會停用憑證生成功能，此時如缺少憑證將會拋出 `FileNotFoundError`，要求運維人員將憑證 Mount/掛載至 `/app/certs/` 對應路徑中。

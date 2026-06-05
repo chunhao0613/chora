@@ -78,7 +78,9 @@ class EdgeDevice:
             "device_id": self.id,
             "device_type": self.type,
             "timestamp": time.time(),
-            "telemetry": telemetry
+            "telemetry": telemetry,
+            "environment_id": self.environment.id,
+            "environment_state": env_data
         }
 
         # 4. Dispatch to Gateway

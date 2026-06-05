@@ -1,0 +1,16 @@
+services:
+  chora-engine:
+    build: .
+    container_name: chora-engine
+    ports:
+      - "8081:8081"
+    # Runs the simulation runner with the configuration file and writes local telemetry logs directly to the mounted data volume
+    command: ["--config", "config/topology_config.json", "--output", "data/telemetry.csv"]
+    volumes:
+      # Mount configuration folder to allow editing topology configs locally
+      - ./config:/app/config
+      # Mount certificates folder to retrieve or store dynamic security certificates
+      - ./certs:/app/certs
+      # Mount output folder to retrieve generated CSV/JSONL/SQLite telemetry data on the host machine
+      - ./data:/app/data
+    restart: unless-stopped

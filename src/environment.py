@@ -2,7 +2,6 @@ import asyncio
 import math
 import random
 import logging
-import time
 
 logger = logging.getLogger("Environment")
 
@@ -20,6 +19,10 @@ class PhysicsEnvironment:
         self._running = False
         self._task = None
 
+        # Chaos event state
+        self.active_event = None
+        self.event_expires_at = 0.0
+
     def _initialize_states(self):
         """Pre-populate initial states for environments."""
         for var_name, conf in self.state_configs.items():
@@ -30,12 +33,21 @@ class PhysicsEnvironment:
                 self.state[var_name] = conf.get("initial", 0.0)
             elif t in ["sine_wave", "diurnal"]:
                 self.state[var_name] = conf.get("bias", 0.0)
+            elif t == "markov_chain":
+                states = conf.get("states", [])
+                self.state[var_name] = conf.get("initial", states[0] if states else "sunny")
             else:
                 self.state[var_name] = 0.0
 
     def get_state(self) -> dict:
         """Returns a copy of the current environment state."""
         return dict(self.state)
+
+    def trigger_chaos_event(self, event_name: str, duration_sec: float):
+        """Triggers a chaos event that temporarily overrides environmental variables."""
+        self.active_event = event_name.lower()
+        self.event_expires_at = self.elapsed_time + duration_sec
+        logger.warning(f"Environment '{self.id}': Chaos event '{event_name}' triggered for {duration_sec} seconds.")
 
     async def start(self):
         """Starts the physical simulation loop."""
@@ -104,5 +116,46 @@ class PhysicsEnvironment:
                 new_val = current + random.uniform(-step, step)
                 self.state[var_name] = max(min_val, min(max_val, new_val))
                 
+            elif t == "markov_chain":
+                states = conf.get("states", [])
+                transition_matrix = conf.get("transition_matrix", {})
+                current = self.state.get(var_name, conf.get("initial"))
+                if not current and states:
+                    current = states[0]
+                if current in transition_matrix:
+                    probs = transition_matrix[current]
+                    choices = list(probs.keys())
+                    weights = [float(w) for w in probs.values()]
+                    if choices and weights:
+                        new_val = random.choices(choices, weights=weights)[0]
+                        self.state[var_name] = new_val
             else:
                 logger.warning(f"Unknown generator type '{t}' for variable '{var_name}' in env '{self.id}'")
+
+        # Apply chaos event overrides
+        if self.active_event:
+            if self.elapsed_time < self.event_expires_at:
+                self._apply_chaos_overrides()
+            else:
+                logger.info(f"Environment '{self.id}': Chaos event '{self.active_event}' expired. Returning to normal physics.")
+                self.active_event = None
+
+    def _apply_chaos_overrides(self):
+        """Overwrites state variables based on active chaos event settings."""
+        if self.active_event == "typhoon":
+            if "wind_speed" in self.state:
+                self.state["wind_speed"] = 75.0 + random.uniform(0.0, 15.0)
+            if "cloud_cover" in self.state:
+                self.state["cloud_cover"] = 1.0
+            if "base_temp" in self.state:
+                self.state["base_temp"] = max(5.0, self.state["base_temp"] - 6.0)
+                
+        elif self.active_event == "heatwave":
+            if "base_temp" in self.state:
+                self.state["base_temp"] = self.state["base_temp"] + 15.0
+            if "cloud_cover" in self.state:
+                self.state["cloud_cover"] = 0.0
+                
+        elif self.active_event == "eclipse":
+            if "solar_radiation" in self.state:
+                self.state["solar_radiation"] = 0.0
