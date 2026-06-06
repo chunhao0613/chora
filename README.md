@@ -1,3 +1,7 @@
+<p align="center">
+<img width="400" height="400" alt="icon" src="https://github.com/user-attachments/assets/9af6a6f6-17c9-46e8-b39d-9a37818baa14" />
+</p>
+
 # Thaumio: Lightweight IoT Behavioral & Data Twin Engine
 
 other languages:[繁體中文](docs/readme/README_TW.md)
