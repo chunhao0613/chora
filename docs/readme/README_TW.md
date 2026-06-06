@@ -1,3 +1,7 @@
+<p align="center">
+<img width="400" height="400" alt="icon" src="https://github.com/user-attachments/assets/9af6a6f6-17c9-46e8-b39d-9a37818baa14" />
+</p>
+
 # Thaumio: 輕量級物聯網行為與數據孿生引擎
 **Thaumio** 是一個專為物聯網（IoT）設計、**基於非同步架構（Asynchronous）與配置驅動（Configuration-driven）**的輕量級物聯網行為與數據孿生引擎。
 
