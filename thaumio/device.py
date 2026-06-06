@@ -1,7 +1,7 @@
 import asyncio
 import time
 import logging
-from src.utils.evaluator import SafeEvaluator
+from thaumio.utils.evaluator import SafeEvaluator
 
 logger = logging.getLogger("Device")
 
@@ -12,7 +12,8 @@ class EdgeDevice:
         self.type = config_data["type"]
         self.update_interval = config_data.get("update_interval_sec", 1.0)
         self.specs = config_data.get("specs", {})
-        self.telemetry_rules = config_data.get("telemetry_rules", {})
+        self.telemetry_rules = config_data.get("payload", config_data.get("telemetry_rules", {})) or {}
+        self.state_updates = config_data.get("state_updates", {})
         
         # Initial mutable internal state
         self.state = config_data.get("initial_state", {}).copy()
@@ -53,11 +54,24 @@ class EdgeDevice:
                 await asyncio.sleep(1.0)
 
     async def _generate_and_send_telemetry(self):
-        """Samples the physical environment, evaluates formulas, updates state, and sends to gateway."""
+        """Samples the physical environment, evaluates state updates, updates state, and sends telemetry."""
         # 1. Sample environment
         env_data = self.environment.get_state()
         
-        # 2. Evaluate rules sequentially
+        # 2. Evaluate state updates using double-buffering to prevent ordering issues
+        next_state = self.state.copy()
+        for key, formula in self.state_updates.items():
+            val = SafeEvaluator.evaluate(
+                expression=formula,
+                env_data=env_data,
+                specs=self.specs,
+                state=self.state,  # Read from previous state
+                self_data={}       # State updates do not reference telemetry
+            )
+            next_state[key] = val
+        self.state = next_state
+        
+        # 3. Evaluate outgoing payload using the newly updated state
         telemetry = {}
         for key, formula in self.telemetry_rules.items():
             val = SafeEvaluator.evaluate(
@@ -68,12 +82,8 @@ class EdgeDevice:
                 self_data=telemetry
             )
             telemetry[key] = val
-            
-            # If the calculated telemetry matches a state variable, update the mutable state
-            if key in self.state:
-                self.state[key] = val
 
-        # 3. Create telemetry message
+        # 4. Create telemetry message
         message = {
             "device_id": self.id,
             "device_type": self.type,
@@ -83,5 +93,5 @@ class EdgeDevice:
             "environment_state": env_data
         }
 
-        # 4. Dispatch to Gateway
+        # 5. Dispatch to Gateway
         await self.gateway.receive_telemetry(message)

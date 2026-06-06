@@ -25,7 +25,7 @@ try:
 except ImportError:
     aiokafka = None
 
-from src.utils.crypto_helper import ensure_test_credentials, generate_ephemeral_rsa_key
+from thaumio.utils.crypto_helper import ensure_test_credentials, generate_ephemeral_rsa_key
 from cryptography.hazmat.primitives import serialization
 
 logger = logging.getLogger("ProtocolAdapters")
@@ -108,7 +108,7 @@ class HTTPAdapter(BaseAdapter):
         
         # Claims
         payload = {
-            "iss": self.auth_config.get("issuer", "chora-gateway"),
+            "iss": self.auth_config.get("issuer", "thaumio-gateway"),
             "aud": self.auth_config.get("audience", "iot-hub"),
             "iat": int(time.time()),
             "exp": int(time.time()) + self.auth_config.get("token_ttl_sec", 300)
@@ -145,7 +145,7 @@ class MQTTAdapter(BaseAdapter):
         self.config = config
         self.host = config.get("endpoint", "localhost")
         self.port = config.get("port", 1883)
-        self.topic = config.get("topic", "telemetry/chora")
+        self.topic = config.get("topic", "telemetry/thaumio")
         self.auth_config = config.get("auth", {})
         self.auth_type = self.auth_config.get("type", "none").lower()
         self.handshake_delay = self.auth_config.get("handshake_delay_sec", 0.0)
@@ -223,7 +223,7 @@ class MQTTAdapter(BaseAdapter):
         # Generate token dynamically
         private_key_file = self.auth_config.get("private_key_file", "certs/device.key")
         payload = {
-            "iss": self.auth_config.get("issuer", "chora-gateway"),
+            "iss": self.auth_config.get("issuer", "thaumio-gateway"),
             "aud": self.auth_config.get("audience", "emqx-broker"),
             "iat": int(time.time()),
             "exp": int(time.time()) + self.auth_config.get("token_ttl_sec", 300)
@@ -287,7 +287,7 @@ class KafkaAdapter(BaseAdapter):
     def __init__(self, config: dict):
         self.config = config
         self.bootstrap_servers = config.get("endpoint", "localhost:9092")
-        self.topic = config.get("topic", "telemetry-chora")
+        self.topic = config.get("topic", "telemetry-thaumio")
         self.auth_config = config.get("auth", {})
         self.auth_type = self.auth_config.get("type", "none").lower()
         self.handshake_delay = self.auth_config.get("handshake_delay_sec", 0.0)
@@ -458,7 +458,7 @@ class JSONLAdapter(BaseAdapter):
 class SQLiteAdapter(BaseAdapter):
     def __init__(self, config: dict):
         self.config = config
-        self.db_path = config.get("endpoint", "chora_telemetry.db")
+        self.db_path = config.get("endpoint", "thaumio_telemetry.db")
         self.conn = None
 
     async def connect(self):
@@ -469,7 +469,7 @@ class SQLiteAdapter(BaseAdapter):
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
             
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         cursor = self.conn.cursor()
         
         cursor.execute("""
@@ -544,6 +544,218 @@ class SQLiteAdapter(BaseAdapter):
             logger.info("SQLiteAdapter: Closed database connection.")
 
 
+class AWSIoTCoreAdapter(BaseAdapter):
+    def __init__(self, config: dict):
+        self.config = config
+        self.endpoint = config.get("endpoint")
+        self.client_id = config.get("client_id", "thaumio-device")
+        self.topic = config.get("topic", "thaumio/telemetry")
+        self.auth_config = config.get("auth", {})
+        self.client = None
+
+    async def connect(self):
+        logger.info(f"AWSIoTCoreAdapter: Connecting to {self.endpoint}...")
+        import paho.mqtt.client as mqtt
+        from thaumio.utils.crypto_helper import ensure_test_credentials
+        
+        ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        cert_file = self.auth_config.get("cert_file", "certs/client.crt")
+        key_file = self.auth_config.get("key_file", "certs/client.key")
+        ca_file = self.auth_config.get("ca_file", "certs/ca.crt")
+        
+        dev_mode = self.config.get("dev_mode", False)
+        ensure_test_credentials(cert_file, key_file, ca_file, dev_mode=dev_mode)
+        
+        ssl_ctx.load_cert_chain(certfile=cert_file, keyfile=key_file)
+        if os.path.exists(ca_file):
+            ssl_ctx.load_verify_locations(cafile=ca_file)
+        else:
+            ssl_ctx.load_default_certs()
+            
+        self.client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=self.client_id)
+        self.client.tls_set_context(ssl_ctx)
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.client.connect, self.endpoint, 8883, 60)
+        self.client.loop_start()
+        logger.info("AWSIoTCoreAdapter: Connected successfully to AWS IoT Core.")
+
+    async def send(self, payload: dict) -> bool:
+        if not self.client:
+            raise RuntimeError("AWSIoTCoreAdapter not connected.")
+        payload_str = json.dumps(payload)
+        self.client.publish(self.topic, payload_str, qos=1)
+        return True
+
+    async def close(self):
+        if self.client:
+            self.client.loop_stop()
+            self.client.disconnect()
+            self.client = None
+            logger.info("AWSIoTCoreAdapter: Connection closed.")
+
+
+class AzureIoTHubAdapter(BaseAdapter):
+    def __init__(self, config: dict):
+        self.config = config
+        self.hub_name = config.get("hub_name")
+        self.device_id = config.get("device_id")
+        self.auth_config = config.get("auth", {})
+        self.topic = f"devices/{self.device_id}/messages/events/"
+        self.client = None
+
+    async def connect(self):
+        logger.info(f"AzureIoTHubAdapter: Connecting device '{self.device_id}' to Hub '{self.hub_name}'...")
+        import paho.mqtt.client as mqtt
+        
+        username = f"{self.hub_name}/{self.device_id}/?api-version=2021-04-12"
+        ssl_ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        
+        cert_file = self.auth_config.get("cert_file")
+        key_file = self.auth_config.get("key_file")
+        ca_file = self.auth_config.get("ca_file")
+        sas_token = self.auth_config.get("sas_token")
+        
+        self.client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2, client_id=self.device_id)
+        
+        if cert_file and key_file:
+            ssl_ctx.load_cert_chain(certfile=cert_file, keyfile=key_file)
+            if ca_file and os.path.exists(ca_file):
+                ssl_ctx.load_verify_locations(cafile=ca_file)
+            self.client.tls_set_context(ssl_ctx)
+        else:
+            ssl_ctx.load_default_certs()
+            self.client.tls_set_context(ssl_ctx)
+            if sas_token:
+                self.client.username_pw_set(username=username, password=sas_token)
+                
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.client.connect, self.hub_name, 8883, 60)
+        self.client.loop_start()
+        logger.info("AzureIoTHubAdapter: Connected successfully to Azure IoT Hub.")
+
+    async def send(self, payload: dict) -> bool:
+        if not self.client:
+            raise RuntimeError("AzureIoTHubAdapter not connected.")
+        payload_str = json.dumps(payload)
+        self.client.publish(self.topic, payload_str, qos=1)
+        return True
+
+    async def close(self):
+        if self.client:
+            self.client.loop_stop()
+            self.client.disconnect()
+            self.client = None
+            logger.info("AzureIoTHubAdapter: Connection closed.")
+
+
+class GCPPubSubAdapter(BaseAdapter):
+    def __init__(self, config: dict):
+        self.config = config
+        self.project_id = config.get("project_id")
+        self.topic_id = config.get("topic_id")
+        self.api_key = config.get("api_key")
+        self.session = None
+
+    async def connect(self):
+        import aiohttp
+        if not aiohttp:
+            raise ImportError("GCPPubSubAdapter requires aiohttp package.")
+        self.session = aiohttp.ClientSession()
+        logger.info(f"GCPPubSubAdapter: Initialized for topic {self.topic_id} under project {self.project_id}")
+
+    async def send(self, payload: dict) -> bool:
+        if not self.session:
+            raise RuntimeError("GCPPubSubAdapter not connected.")
+        import base64
+        payload_bytes = json.dumps(payload).encode("utf-8")
+        b64_data = base64.b64encode(payload_bytes).decode("utf-8")
+        
+        url = f"https://pubsub.googleapis.com/v1/projects/{self.project_id}/topics/{self.topic_id}:publish"
+        headers = {"Content-Type": "application/json"}
+        params = {}
+        if self.api_key:
+            params["key"] = self.api_key
+            
+        async with self.session.post(url, json={"messages": [{"data": b64_data}]}, headers=headers, params=params) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                logger.error(f"GCPPubSubAdapter: Publish failed with status {resp.status}: {text}")
+                return False
+        return True
+
+    async def close(self):
+        if self.session:
+            await self.session.close()
+            self.session = None
+
+
+class InfluxDBAdapter(BaseAdapter):
+    def __init__(self, config: dict):
+        self.config = config
+        self.url = config.get("endpoint", "http://localhost:8086")
+        self.token = config.get("token")
+        self.org = config.get("org")
+        self.bucket = config.get("bucket")
+        self.session = None
+
+    async def connect(self):
+        import aiohttp
+        if not aiohttp:
+            raise ImportError("InfluxDBAdapter requires aiohttp package.")
+        self.session = aiohttp.ClientSession()
+        logger.info(f"InfluxDBAdapter: Connected to InfluxDB at {self.url} (bucket: {self.bucket})")
+
+    async def send(self, payload: dict) -> bool:
+        if not self.session:
+            raise RuntimeError("InfluxDBAdapter not connected.")
+        
+        lines = []
+        gateway_id = payload.get("gateway_id")
+        
+        for msg in payload.get("data", []):
+            timestamp_ns = int(msg.get("timestamp", time.time()) * 1e9)
+            device_id = msg.get("device_id")
+            device_type = msg.get("device_type")
+            environment_id = msg.get("environment_id", "unknown")
+            
+            telemetry = msg.get("telemetry", {})
+            if telemetry:
+                fields_str = ",".join(f"{k}={v}" for k, v in telemetry.items() if v is not None)
+                if fields_str:
+                    line = f"device_telemetry,gateway_id={gateway_id},device_id={device_id},device_type={device_type},environment_id={environment_id} {fields_str} {timestamp_ns}"
+                    lines.append(line)
+                    
+            env_state = msg.get("environment_state", {})
+            if env_state:
+                fields_str = ",".join(f"{k}={v}" for k, v in env_state.items() if v is not None)
+                if fields_str:
+                    line = f"environment_state,environment_id={environment_id} {fields_str} {timestamp_ns}"
+                    lines.append(line)
+                    
+        if not lines:
+            return True
+            
+        body = "\n".join(lines) + "\n"
+        headers = {
+            "Authorization": f"Token {self.token}",
+            "Content-Type": "text/plain; charset=utf-8"
+        }
+        write_url = f"{self.url}/api/v2/write?org={self.org}&bucket={self.bucket}&precision=ns"
+        
+        async with self.session.post(write_url, data=body, headers=headers) as resp:
+            if resp.status not in (204, 200):
+                text = await resp.text()
+                logger.error(f"InfluxDBAdapter: Write failed with status {resp.status}: {text}")
+                return False
+        return True
+
+    async def close(self):
+        if self.session:
+            await self.session.close()
+            self.session = None
+
+
 class ProtocolAdapterFactory:
     @staticmethod
     def create_adapter(config: dict) -> BaseAdapter:
@@ -560,13 +772,19 @@ class ProtocolAdapterFactory:
             return JSONLAdapter(config)
         elif protocol == "sqlite":
             return SQLiteAdapter(config)
+        elif protocol == "aws_iot":
+            return AWSIoTCoreAdapter(config)
+        elif protocol == "azure_iot":
+            return AzureIoTHubAdapter(config)
+        elif protocol == "gcp_pubsub":
+            return GCPPubSubAdapter(config)
+        elif protocol == "influxdb":
+            return InfluxDBAdapter(config)
         else:
-            # Default mock adapter for backward compatibility / console logging
             class MockAdapter(BaseAdapter):
                 async def connect(self):
                     pass
                 async def send(self, payload: dict) -> bool:
-                    # Print to terminal
                     print(f"\n======================================================================")
                     print(f"[MOCK BACKEND RECEIVED] Gateway: {payload['gateway_id']} ({payload['gateway_name']})")
                     print(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(payload['timestamp']))}")

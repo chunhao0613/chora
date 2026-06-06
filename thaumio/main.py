@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional
 class ChaosEventRequest(BaseModel):
     event: str = Field(..., description="Name of the chaos event, e.g. 'typhoon'")
     duration_sec: float = Field(30.0, description="Duration of the event in seconds")
+    overrides: Optional[Dict[str, str]] = Field(None, description="Optional dynamic mathematical expressions to override state variables")
 
 class EnvironmentRequest(BaseModel):
     id: str = Field(..., description="Unique ID of the environment")
@@ -26,12 +27,28 @@ class DeviceRequest(BaseModel):
     gateway_id: str = Field(..., description="ID of the gateway to bind to")
     update_interval_sec: float = Field(..., description="Telemetry generation interval in seconds")
     specs: Dict[str, Any] = Field(default_factory=dict, description="Static specifications/constants for formulas")
-    telemetry_rules: Dict[str, str] = Field(..., description="Mathematical formulas for telemetry fields")
+    payload: Optional[Dict[str, str]] = Field(None, description="Direct key-value mapping formulas for telemetry payload")
+    telemetry_rules: Optional[Dict[str, str]] = Field(None, description="Alternative/legacy key for payload formulas")
+    state_updates: Dict[str, str] = Field(default_factory=dict, description="State variables update mathematical formulas")
     initial_state: Dict[str, Any] = Field(default_factory=dict, description="Initial values for device states")
 
-from src.environment import PhysicsEnvironment
-from src.gateway import EdgeGateway
-from src.device import EdgeDevice
+class GatewayRequest(BaseModel):
+    id: str = Field(..., description="Unique ID of the gateway")
+    name: str = Field(..., description="Human-readable name of the gateway")
+    buffer_size: Optional[int] = Field(100, description="Size of offline buffer")
+    aggregation_interval_sec: Optional[float] = Field(2.0, description="Aggregation interval in seconds")
+    network_reliability: Optional[float] = Field(1.0, description="Network reliability")
+    connection: Dict[str, Any] = Field(..., description="Connection configuration including protocol, endpoint, etc.")
+
+class TopologyRequest(BaseModel):
+    dev_mode: Optional[bool] = False
+    environments: List[EnvironmentRequest] = Field(default_factory=list)
+    gateways: List[GatewayRequest] = Field(default_factory=list)
+    devices: List[DeviceRequest] = Field(default_factory=list)
+
+from thaumio.environment import PhysicsEnvironment
+from thaumio.gateway import EdgeGateway
+from thaumio.device import EdgeDevice
 
 # Setup logging
 logging.basicConfig(
@@ -168,7 +185,7 @@ class SimulationRunner:
         import uvicorn
 
         app = FastAPI(
-            title="Chora IoT Edge Simulation Engine",
+            title="Thaumio IoT Edge Simulation Engine",
             description="Dynamic control plane APIs for environment/device registration and chaos engineering.",
             version="2.0.0"
         )
@@ -179,7 +196,7 @@ class SimulationRunner:
             env = self.environments.get(env_id)
             if not env:
                 raise HTTPException(status_code=404, detail=f"Environment '{env_id}' not found")
-            env.trigger_chaos_event(body.event, body.duration_sec)
+            env.trigger_chaos_event(body.event, body.duration_sec, body.overrides)
             return {
                 "status": "success",
                 "message": f"Chaos event '{body.event}' successfully injected into environment '{env_id}' for {body.duration_sec}s"
@@ -340,22 +357,218 @@ class SimulationRunner:
             logger.info("Topology successfully reloaded and restarted.")
         except Exception as e:
             logger.error(f"Failed to reload configuration: {e}")
-
 async def main():
     parser = argparse.ArgumentParser(description="High-Fidelity IoT Edge Simulation System Daemon")
-    parser.add_argument(
+    
+    subparsers = parser.add_subparsers(dest="command", help="Sub-commands")
+    
+    # Init sub-command
+    init_parser = subparsers.add_parser("init", help="Initialize a template topology configuration file")
+    init_parser.add_argument(
+        "--scenario", 
+        type=str, 
+        default="smart_farm", 
+        choices=["smart_farm", "server_room", "electric_vehicle"], 
+        help="Scenario preset to generate"
+    )
+    init_parser.add_argument(
+        "--out", 
+        type=str, 
+        default="config/topology_config.json", 
+        help="Path to write the config file"
+    )
+    
+    # Validate sub-command
+    validate_parser = subparsers.add_parser("validate", help="Validate a topology configuration file against schema")
+    validate_parser.add_argument(
+        "--config", 
+        type=str, 
+        default="config/topology_config.json", 
+        help="Path to the topology JSON configuration file to validate"
+    )
+    
+    # Run sub-command
+    run_parser = subparsers.add_parser("run", help="Run the high-fidelity IoT simulation engine")
+    run_parser.add_argument(
         "--config", 
         type=str, 
         default="config/topology_config.json", 
         help="Path to the topology JSON configuration file"
+    )
+    run_parser.add_argument(
+        "--output",
+        type=str,
+        help="Optional local output path to save telemetry directly (supports .csv, .jsonl, .db/.sqlite)"
+    )
+    
+    # Run options (default / fallback)
+    parser.add_argument(
+        "--config", 
+        type=str, 
+        default="config/topology_config.json", 
+        help="Path to the topology JSON configuration file (for run mode)"
     )
     parser.add_argument(
         "--output",
         type=str,
         help="Optional local output path to save telemetry directly (supports .csv, .jsonl, .db/.sqlite)"
     )
+    
     args = parser.parse_args()
+    
+    if args.command == "init":
+        # Generate configuration template based on scenario preset
+        scenarios = {
+            "smart_farm": {
+                "$schema": "./topology_schema.json",
+                "dev_mode": True,
+                "environments": [
+                    {
+                        "id": "env_smart_farm_01",
+                        "name": "Smart Farm Greenhouse 01",
+                        "update_interval_sec": 1.0,
+                        "preset": "smart_farm"
+                    }
+                ],
+                "gateways": [
+                    {
+                        "id": "gw_smart_farm",
+                        "name": "Smart Farm Gateway",
+                        "protocol": "csv",
+                        "endpoint": "data/farm_telemetry.csv",
+                        "batch_size": 2,
+                        "flush_interval_sec": 1.0
+                    }
+                ],
+                "devices": [
+                    {
+                        "id": "dev_temp_sensor",
+                        "name": "Air Temperature Sensor",
+                        "type": "temp_sensor",
+                        "environment_id": "env_smart_farm_01",
+                        "gateway_id": "gw_smart_farm",
+                        "update_interval_sec": 1.0,
+                        "payload": {
+                            "air_temp": "env.temperature",
+                            "weather": "env.weather_state"
+                        }
+                    },
+                    {
+                        "id": "dev_solar_sensor",
+                        "name": "Solar Radiation Sensor",
+                        "type": "solar_sensor",
+                        "environment_id": "env_smart_farm_01",
+                        "gateway_id": "gw_smart_farm",
+                        "update_interval_sec": 1.0,
+                        "payload": {
+                            "radiation": "env.solar_radiation",
+                            "cloud": "env.cloud_cover"
+                        }
+                    }
+                ]
+            },
+            "server_room": {
+                "$schema": "./topology_schema.json",
+                "dev_mode": True,
+                "environments": [
+                    {
+                        "id": "env_server_room_01",
+                        "name": "Data Center Server Room 01",
+                        "update_interval_sec": 1.0,
+                        "preset": "server_room"
+                    }
+                ],
+                "gateways": [
+                    {
+                        "id": "gw_server_room",
+                        "name": "Server Room Gateway",
+                        "protocol": "jsonl",
+                        "endpoint": "data/room_telemetry.jsonl",
+                        "batch_size": 3,
+                        "flush_interval_sec": 2.0
+                    }
+                ],
+                "devices": [
+                    {
+                        "id": "dev_ac_controller",
+                        "name": "AC Unit Controller",
+                        "type": "ac_controller",
+                        "environment_id": "env_server_room_01",
+                        "gateway_id": "gw_server_room",
+                        "update_interval_sec": 1.0,
+                        "payload": {
+                            "ambient_temperature": "env.ambient_temp",
+                            "humidity_pct": "env.humidity",
+                            "current_ac_load": "env.ac_load"
+                        }
+                    }
+                ]
+            },
+            "electric_vehicle": {
+                "$schema": "./topology_schema.json",
+                "dev_mode": True,
+                "environments": [
+                    {
+                        "id": "env_ev_01",
+                        "name": "Tesla Model Y Simulator",
+                        "update_interval_sec": 0.5,
+                        "preset": "electric_vehicle"
+                    }
+                ],
+                "gateways": [
+                    {
+                        "id": "gw_ev",
+                        "name": "EV Onboard Gateway",
+                        "protocol": "sqlite",
+                        "endpoint": "data/ev_telemetry.db",
+                        "batch_size": 5,
+                        "flush_interval_sec": 1.0
+                    }
+                ],
+                "devices": [
+                    {
+                        "id": "dev_obd_reader",
+                        "name": "OBD II Telemetry Reader",
+                        "type": "obd_reader",
+                        "environment_id": "env_ev_01",
+                        "gateway_id": "gw_ev",
+                        "update_interval_sec": 0.5,
+                        "payload": {
+                            "vehicle_speed_kph": "env.speed",
+                            "battery_temp_c": "env.battery_temp",
+                            "motor_rpm": "env.motor_rpm"
+                        }
+                    }
+                ]
+            }
+        }
+        
+        selected_scenario = scenarios[args.scenario]
+        out_dir = os.path.dirname(args.out)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+            
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(selected_scenario, f, indent=2)
+            
+        print(f"[SUCCESS] Initialized template topology config file at '{args.out}' using scenario '{args.scenario}'")
+        sys.exit(0)
 
+    elif args.command == "validate":
+        if not os.path.exists(args.config):
+            print(f"[ERROR] Config file not found: {args.config}")
+            sys.exit(1)
+        try:
+            with open(args.config, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            TopologyRequest.model_validate(data)
+            print(f"[SUCCESS] Config file '{args.config}' is valid!")
+            sys.exit(0)
+        except Exception as e:
+            print(f"[ERROR] Validation failed for '{args.config}':\n{e}")
+            sys.exit(1)
+
+    # Default run flow
     runner = SimulationRunner(args.config)
     try:
         runner.load_topology(output_override=args.output)
@@ -367,7 +580,6 @@ async def main():
 
     logger.info("Running simulation indefinitely as a Daemon. Press Ctrl+C or send SIGTERM to terminate.")
     try:
-        # Keep running until cancelled
         while True:
             await asyncio.sleep(3600)
     except (asyncio.CancelledError, KeyboardInterrupt):
@@ -375,8 +587,11 @@ async def main():
     finally:
         await runner.stop()
 
-if __name__ == "__main__":
+def main_entry():
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Simulation terminated by user via KeyboardInterrupt.")
+
+if __name__ == "__main__":
+    main_entry()

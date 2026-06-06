@@ -1,2 +1,11 @@
 .agent/*
 .env
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+data/
+*.db
+*.csv
+*.jsonl

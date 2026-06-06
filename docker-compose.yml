@@ -1,7 +1,7 @@
 services:
-  chora-engine:
+  thaumio:
     build: .
-    container_name: chora-engine
+    container_name: thaumio
     ports:
       - "8081:8081"
     # Runs the simulation runner with the configuration file and writes local telemetry logs directly to the mounted data volume

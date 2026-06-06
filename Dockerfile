@@ -16,20 +16,20 @@ FROM python:3.11-slim AS runner
 WORKDIR /app
 
 # Create a non-privileged system user for security
-RUN groupadd -g 10001 chora && \
-    useradd -u 10001 -g chora -m -s /sbin/nologin chora
+RUN groupadd -g 10001 thaumio && \
+    useradd -u 10001 -g thaumio -m -s /sbin/nologin thaumio
 
 # Copy installed python dependencies from builder stage
-COPY --from=builder /root/.local /home/chora/.local
-ENV PATH=/home/chora/.local/bin:$PATH
+COPY --from=builder /root/.local /home/thaumio/.local
+ENV PATH=/home/thaumio/.local/bin:$PATH
 
 # Copy application code
-COPY --chown=chora:chora src/ ./src/
-COPY --chown=chora:chora config/ ./config/
+COPY --chown=thaumio:thaumio thaumio/ ./thaumio/
+COPY --chown=thaumio:thaumio config/ ./config/
 
 # Pre-create directory for data output mount with correct ownership
 RUN mkdir -p /app/data /app/certs && \
-    chown -R chora:chora /app
+    chown -R thaumio:thaumio /app
 
 # Expose the FastAPI Control Plane REST API port
 EXPOSE 8081
@@ -38,8 +38,8 @@ EXPOSE 8081
 VOLUME ["/app/config", "/app/certs", "/app/data"]
 
 # Switch to the non-privileged user
-USER chora
+USER thaumio
 
 # Run the simulation engine with configurations
-ENTRYPOINT ["python", "-m", "src.main"]
+ENTRYPOINT ["python", "-m", "thaumio.main", "run"]
 CMD ["--config", "config/topology_config.json"]

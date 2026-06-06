@@ -3,7 +3,7 @@ import time
 import random
 import logging
 from collections import deque
-from src.adapters import ProtocolAdapterFactory
+from thaumio.adapters import ProtocolAdapterFactory
 
 logger = logging.getLogger("Gateway")
 

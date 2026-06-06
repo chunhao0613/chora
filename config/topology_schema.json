@@ -1,0 +1,122 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Thaumio Topology Configuration",
+  "type": "object",
+  "properties": {
+    "dev_mode": {
+      "type": "boolean",
+      "description": "If true, auto-generates JWT keys and TLS certificates if they are missing"
+    },
+    "environments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "update_interval_sec": { "type": "number", "default": 1.0 },
+          "preset": {
+            "type": "string",
+            "enum": ["smart_farm", "server_room", "electric_vehicle"],
+            "description": "Predefined physical variable configurations to simplify environment creation"
+          },
+          "state_variables": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": { "type": "string", "enum": ["constant", "sine_wave", "diurnal", "random_walk", "markov_chain"] },
+                "value": { "type": "number" },
+                "amplitude": { "type": "number" },
+                "period_sec": { "type": "number" },
+                "bias": { "type": "number" },
+                "noise": { "type": "number" },
+                "min_val": { "type": "number" },
+                "max_val": { "type": "number" },
+                "step": { "type": "number" },
+                "initial": { "type": "number" },
+                "states": { "type": "array", "items": { "type": "string" } },
+                "transition_matrix": { "type": "object" }
+              }
+            }
+          },
+          "chaos_events": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "overrides": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "description": "Mathematical formulas specifying variable overrides during chaos event"
+                }
+              }
+            },
+            "description": "Predefined chaos engineering events and their math override rules"
+          }
+        }
+      }
+    },
+    "gateways": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "protocol"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "protocol": { "type": "string", "enum": ["mock", "http", "mqtt", "kafka", "csv", "jsonl", "sqlite", "aws_iot", "azure_iot", "gcp_pubsub", "influxdb"] },
+          "endpoint": { "type": "string" },
+          "batch_size": { "type": "integer", "default": 5 },
+          "flush_interval_sec": { "type": "number", "default": 2.0 },
+          "network_reliability": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0 },
+          "auth": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "enum": ["none", "jwt", "mtls", "sas_token"] },
+              "cert_file": { "type": "string" },
+              "key_file": { "type": "string" },
+              "ca_file": { "type": "string" },
+              "jwt_secret": { "type": "string" },
+              "sas_token": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "type", "environment_id", "gateway_id"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string" },
+          "environment_id": { "type": "string" },
+          "gateway_id": { "type": "string" },
+          "update_interval_sec": { "type": "number", "default": 1.0 },
+          "specs": { "type": "object" },
+          "payload": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Mapping structure for target JSON output values"
+          },
+          "telemetry_rules": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Alternative key for payload formulas"
+          },
+          "initial_state": { "type": "object" },
+          "state_updates": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "description": "Mathematical formulas for updating state variables using previous state variables"
+          }
+        }
+      }
+    }
+  }
+}

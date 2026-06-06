@@ -47,7 +47,7 @@ def ensure_test_credentials(cert_path: str, key_path: str, ca_path: str = None, 
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COUNTRY_NAME, u"TW"),
         x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"Taipei"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Chora Digital Twin"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Thaumio Digital Twin"),
         x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
     ])
 

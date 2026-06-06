@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thaumio"
+version = "2.0.0"
+authors = [
+    { name = "Thaumio Contributors" }
+]
+description = "A lightweight, stateful, and chaos-driven IoT Digital Twin simulation engine."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Object Brokering",
+]
+dependencies = [
+    "aiohttp>=3.8.0",
+    "paho-mqtt>=1.6.1",
+    "aiokafka>=0.8.0",
+    "pyjwt>=2.4.0",
+    "cryptography>=37.0.0",
+    "watchdog>=3.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "pydantic>=2.0.0",
+]
+
+[project.scripts]
+thaumio = "thaumio.main:main_entry"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["thaumio", "thaumio.*"]
